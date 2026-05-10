@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard | Smart Task Management</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/lucide/0.263.0/lucide.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <nav class="nav">
+            <div class="logo">SmartTask.</div>
+            <div style="display: flex; gap: 1rem; align-items: center;">
+                <span style="font-weight: 600; color: var(--text-muted);">Hi, {{ current_user.username }}</span>
+                <a href="{{ url_for('logout') }}" class="btn" style="background: #f1f5f9; color: var(--text-main);">Logout</a>
+                <button onclick="toggleModal(true)" class="btn btn-primary" style="width: auto;">+ New Task</button>
+            </div>
+        </nav>
+
+        <!-- Analytics Summary -->
+        <div class="analytics-grid" id="analytics-container">
+            <div class="glass-card stat-card">
+                <div class="stat-label">Total Tasks</div>
+                <div class="stat-value" id="total-tasks">{{ analytics.total }}</div>
+            </div>
+            <div class="glass-card stat-card">
+                <div class="stat-label">Completed</div>
+                <div class="stat-value" style="color: var(--success);" id="completed-tasks">{{ analytics.completed }}</div>
+            </div>
+            <div class="glass-card stat-card">
+                <div class="stat-label">Pending</div>
+                <div class="stat-value" style="color: var(--pending);" id="pending-tasks">{{ analytics.pending }}</div>
+            </div>
+            <div class="glass-card stat-card">
+                <div class="stat-label">Completion Percentage</div>
+                <div class="stat-value" id="completion-percentage">{{ analytics.percentage }}%</div>
+            </div>
+        </div>
+
+        <!-- Task List -->
+        <div class="task-grid">
+            <h2 style="margin-bottom: 1rem; font-weight: 800;">Recent Tasks</h2>
+            <div id="task-list">
+                {% for task in tasks %}
+                <div class="glass-card task-item" id="task-{{ task.id }}">
+                    <div class="task-info">
+                        <h3 style="text-decoration: {{ 'line-through' if task.status == 'Completed' else 'none' }}">{{ task.title }}</h3>
+                        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 0.5rem;">{{ task.description }}</p>
+                        <div class="task-meta">
+                            <span class="badge badge-{{ task.priority.lower() }}">{{ task.priority }}</span>
+                            <span class="badge badge-status">{{ task.status }}</span>
+                            <span>{{ task.created_date }}</span>
+                        </div>
+                    </div>
+                    <div class="task-actions">
+                        {% if task.status != 'Completed' %}
+                        <button onclick="updateTaskStatus({{ task.id }}, 'Completed')" class="btn-action">
+                            Mark Complete
+                        </button>
+                        {% else %}
+                        <button onclick="updateTaskStatus({{ task.id }}, 'Pending')" class="btn-action">
+                            Mark Pending
+                        </button>
+                        {% endif %}
+                        <button onclick="deleteTask({{ task.id }})" class="btn-action btn-action-delete">
+                            Delete
+                        </button>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Task Modal -->
+    <div id="add-task-modal" class="modal">
+        <div class="glass-card modal-content">
+            <h2 style="margin-bottom: 1.5rem; font-weight: 800;">Add New Task</h2>
+            <div class="form-group">
+                <label class="form-label">Title</label>
+                <input type="text" id="new-task-title" class="form-control" placeholder="What needs to be done?">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Description</label>
+                <textarea id="new-task-desc" class="form-control" rows="3" placeholder="Add some details..."></textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Priority</label>
+                <select id="new-task-priority" class="form-control">
+                    <option value="Low">Low</option>
+                    <option value="Medium" selected>Medium</option>
+                    <option value="High">High</option>
+                </select>
+            </div>
+            <div style="display: flex; gap: 1rem; margin-top: 2rem;">
+                <button onclick="toggleModal(false)" class="btn" style="flex: 1; background: #f1f5f9;">Cancel</button>
+                <button onclick="addTask()" class="btn btn-primary" style="flex: 1;">Create Task</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="notifications"></div>
+
+    <script>
+        // Initialize Lucide icons (moved to DOMContentLoaded)
+
+        // WebSocket Setup
+        let socket;
+        try {
+            socket = io();
+            socket.on('connect', () => {
+                console.log('Connected to WebSocket');
+            });
+            socket.on('task_update', (data) => {
+                showNotification(data.message);
+                refreshAnalytics();
+            });
+        } catch (e) {
+            console.error('Socket.IO init failed:', e);
+        }
+
+        function showNotification(message) {
+            const container = document.getElementById('notifications');
+            const toast = document.createElement('div');
+            toast.className = 'notification';
+            toast.innerText = message;
+            container.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        // Modal Management
+        function toggleModal(show) {
+            document.getElementById('add-task-modal').classList.toggle('active', show);
+        }
+
+        // API Calls
+        async function refreshAnalytics() {
+            try {
+                const res = await fetch('/api/analytics');
+                if (!res.ok) throw new Error('Failed to fetch analytics');
+                const data = await res.json();
+                
+                const elements = {
+                    'total-tasks': data.total,
+                    'completed-tasks': data.completed,
+                    'pending-tasks': data.pending,
+                    'completion-percentage': (data.percentage || 0) + '%'
+                };
+                
+                for (const [id, value] of Object.entries(elements)) {
+                    const el = document.getElementById(id);
+                    if (el) el.innerText = value;
+                }
+            } catch (err) {
+                console.error('Analytics Error:', err);
+            }
+        }
+
+        async function addTask() {
+            const title = document.getElementById('new-task-title').value;
+            const description = document.getElementById('new-task-desc').value;
+            const priority = document.getElementById('new-task-priority').value;
+
+            if (!title) return alert("Title is required");
+
+            const res = await fetch('/api/tasks', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title, description, priority })
+            });
+
+            if (res.ok) {
+                toggleModal(false);
+                location.reload(); // Simple approach for this demo
+            }
+        }
+
+        async function updateTaskStatus(id, status) {
+            const res = await fetch(`/api/tasks/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status })
+            });
+            if (res.ok) location.reload();
+        }
+
+        async function deleteTask(id) {
+            const res = await fetch(`/api/tasks/${id}`, {
+                method: 'DELETE'
+            });
+            if (res.ok) location.reload();
+        }
+
+        // Initial Load
+        document.addEventListener('DOMContentLoaded', () => {
+            refreshAnalytics();
+            try {
+                lucide.createIcons();
+            } catch (e) {
+                console.error('Lucide error:', e);
+            }
+        });
+    </script>
+</body>
+</html>
